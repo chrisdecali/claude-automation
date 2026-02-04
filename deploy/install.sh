@@ -84,9 +84,17 @@ echo "NOTE: Example configs copied to $CONFIG_DIR. Please rename and configure t
 
 # 8. Install and enable systemd service
 echo "Installing systemd service..."
-# Copy from source location (where this script is) since deploy dir is excluded from rsync
-SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-cp "$SCRIPT_DIR/claude-automation.service" /etc/systemd/system/claude-automation.service
+# The service file should be copied from the source repo before running this script
+# We expect it to be passed as an argument or available in the current directory structure
+if [ -f "deploy/claude-automation.service" ]; then
+    cp deploy/claude-automation.service /etc/systemd/system/claude-automation.service
+elif [ -f "../deploy/claude-automation.service" ]; then
+    cp ../deploy/claude-automation.service /etc/systemd/system/claude-automation.service
+else
+    echo "ERROR: Cannot find claude-automation.service file"
+    echo "Please ensure the script is run from the project root directory"
+    exit 1
+fi
 systemctl daemon-reload
 systemctl enable claude-automation.service
 
