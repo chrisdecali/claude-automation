@@ -36,7 +36,71 @@ function startServer() {
         hostname: config.server.host,
         
         async fetch(req, server) {
-            // ... (same as before)
+            const url = new URL(req.url);
+            let filePath = `./public${url.pathname}`;
+            if (url.pathname === '/') {
+                filePath = './public/index.html';
+            }
+
+            const file = Bun.file(filePath);
+            const fileExists = await file.exists();
+
+            if (fileExists) {
+                return new Response(file);
+            }
+            
+            // Health check (no auth)
+            if (url.pathname === '/health') {
+                return new Response(JSON.stringify({ status: 'ok', timestamp: new Date().toISOString() }), {
+                    headers: { 'Content-Type': 'application/json' }
+                });
+            }
+
+            // API routes
+            if (url.pathname.startsWith('/api/')) {
+                 const ipError = checkIP(req, server);
+                 if (ipError) return ipError;
+
+                // Protected routes
+                if (url.pathname.startsWith('/api/tasks/')) {
+                    const authError = requireAuth(req);
+                    if (authError) return authError;
+
+                    const taskName = url.pathname.split('/')[3];
+                    if (url.pathname.endsWith('/run')) {
+                        if (!config.tasks[taskName]) {
+                            return new Response(JSON.stringify({ error: `Task '${taskName}' not found` }), {
+                                status: 404,
+                                headers: { 'Content-Type': 'application/json' }
+                            });
+                        }
+                        
+                        runTask(taskName);
+
+                        return new Response(JSON.stringify({ message: `Task '${taskName}' started.` }), {
+                            headers: { 'Content-Type': 'application/json' }
+                        });
+                    }
+                }
+                
+                if (url.pathname.startsWith('/api/sessions/')) {
+                     const authError = requireAuth(req);
+                     if (authError) return authError;
+                    
+                    const sessionId = url.pathname.split('/')[3];
+                    const session = sessionManager.getSession(sessionId);
+
+                    if (!session) {
+                        return new Response(JSON.stringify({ error: 'Session not found' }), {
+                            status: 404,
+                            headers: { 'Content-Type': 'application/json' }
+                        });
+                    }
+                    return new Response(JSON.stringify(session), { headers: { 'Content-Type': 'application/json' } });
+                }
+            }
+
+            return new Response('Not Found', { status: 404 });
         },
         error(error) {
             mainLogger.error(`Server error: ${error}`);
