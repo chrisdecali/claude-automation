@@ -1,0 +1,36 @@
+# Worktrees
+.worktrees/
+
+# Dependencies
+node_modules/
+package-lock.json
+
+# Environment
+.env
+.env.local
+
+# Logs
+*.log
+logs/
+
+# System config (contains secrets)
+config.json
+
+# Testing
+coverage/
+.nyc_output/
+
+# Build
+dist/
+build/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
