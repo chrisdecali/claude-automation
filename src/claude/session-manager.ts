@@ -12,11 +12,18 @@ export class SessionManager {
             resolveCompletion = resolve;
         });
 
+        // Create working directory BEFORE spawning the process
+        await mkdir(options.workingDir, { recursive: true });
+
         const proc = spawn({
-            cmd: ["/usr/bin/claude", options.prompt],
+            cmd: ["/usr/bin/claude", "-p", options.prompt],
             cwd: options.workingDir,
             stdout: "pipe",
             stderr: "pipe",
+            env: {
+                ...process.env,
+                HOME: "/home/claude",
+            },
         });
 
         const session: ClaudeSession = {
@@ -32,8 +39,6 @@ export class SessionManager {
         };
 
         this.activeSessions.set(session.id, session);
-
-        await mkdir(options.workingDir, { recursive: true });
 
         let stderrOutput = '';
         const reader = proc.stderr.getReader();
@@ -52,7 +57,7 @@ export class SessionManager {
             session.endTime = new Date();
             session.exitCode = exitCode;
             session.status = exitCode === 0 ? 'completed' : 'failed';
-            
+
             // To ensure the full stdout is captured if not consumed elsewhere
             const stdoutReader = session.outputStream?.getReader();
             if (stdoutReader) {
