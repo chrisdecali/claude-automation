@@ -1,0 +1,15 @@
+{
+  "example-rest-api": {
+    "name": "Example REST API",
+    "type": "rest",
+    "baseUrl": "https://api.example.com",
+    "auth": {
+      "type": "bearer",
+      "token": "YOUR_API_TOKEN"
+    }
+  },
+  "example-mcp-api": {
+      "name": "Example MCP API",
+      "type": "mcp"
+  }
+}

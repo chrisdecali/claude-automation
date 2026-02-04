@@ -1,0 +1,10 @@
+{
+  "example-task": {
+    "name": "Example Task",
+    "prompt": "This is an example prompt for a task.",
+    "workingDir": "/tmp",
+    "schedule": "0 * * * *",
+    "notifyOn": ["success", "failure"],
+    "enabled": true
+  }
+}
