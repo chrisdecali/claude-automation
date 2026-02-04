@@ -84,7 +84,9 @@ echo "NOTE: Example configs copied to $CONFIG_DIR. Please rename and configure t
 
 # 8. Install and enable systemd service
 echo "Installing systemd service..."
-cp $APP_DIR/deploy/claude-automation.service /etc/systemd/system/claude-automation.service
+# Copy from source location (where this script is) since deploy dir is excluded from rsync
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+cp "$SCRIPT_DIR/claude-automation.service" /etc/systemd/system/claude-automation.service
 systemctl daemon-reload
 systemctl enable claude-automation.service
 
