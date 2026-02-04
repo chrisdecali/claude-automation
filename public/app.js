@@ -11,7 +11,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const socket = new WebSocket(wsUrl);
 
     let assistantMessageElement = null;
+    let thinkingElement = null;
     let sessionActive = false;
+    let waitingForResponse = false;
 
     function setSessionActive(active) {
         sessionActive = active;
@@ -91,20 +93,41 @@ document.addEventListener('DOMContentLoaded', () => {
                 assistantMessageElement = null;
                 break;
             case 'stream-start':
+                // Remove thinking indicator
+                if (thinkingElement) {
+                    thinkingElement.remove();
+                    thinkingElement = null;
+                }
                 assistantMessageElement = createAssistantMessage();
+                waitingForResponse = false;
                 break;
             case 'stream':
                 if (assistantMessageElement) {
+                    // Remove thinking indicator on first chunk if still present
+                    if (thinkingElement) {
+                        thinkingElement.remove();
+                        thinkingElement = null;
+                    }
                     assistantMessageElement.textContent += data.payload;
                     chatWindow.scrollTop = chatWindow.scrollHeight;
                 }
                 break;
             case 'stream-end':
                 assistantMessageElement = null;
+                sendButton.disabled = false;
+                promptInput.disabled = false;
+                promptInput.focus();
                 break;
             case 'error':
+                if (thinkingElement) {
+                    thinkingElement.remove();
+                    thinkingElement = null;
+                }
                 addMessageToChat(`Error: ${data.payload}`, 'System');
                 assistantMessageElement = null;
+                waitingForResponse = false;
+                sendButton.disabled = false;
+                promptInput.disabled = false;
                 break;
         }
     };
@@ -144,6 +167,17 @@ document.addEventListener('DOMContentLoaded', () => {
         addMessageToChat(prompt, 'You');
         socket.send(JSON.stringify({ type: 'chat', payload: prompt }));
         promptInput.value = '';
+
+        // Show thinking indicator and disable input
+        waitingForResponse = true;
+        sendButton.disabled = true;
+        promptInput.disabled = true;
+        thinkingElement = document.createElement('div');
+        thinkingElement.classList.add('mb-2', 'text-gray-400', 'italic');
+        thinkingElement.textContent = 'Claude is thinking...';
+        thinkingElement.style.animation = 'pulse 1.5s ease-in-out infinite';
+        chatWindow.appendChild(thinkingElement);
+        chatWindow.scrollTop = chatWindow.scrollHeight;
     }
 
     sessionToggle.addEventListener('click', () => {

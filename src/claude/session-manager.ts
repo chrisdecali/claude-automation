@@ -10,6 +10,7 @@ export interface ConversationMessage {
 
 export interface PromptResult {
     output: string;
+    stderr: string;
     exitCode: number;
 }
 
@@ -30,7 +31,7 @@ export class SessionManager {
         }
 
         const proc = spawn({
-            cmd: ["claude", "-p", formattedPrompt],
+            cmd: ["claude", "-p", "--dangerously-skip-permissions", formattedPrompt],
             cwd: workingDir,
             stdout: "pipe",
             stderr: "pipe",
@@ -42,6 +43,7 @@ export class SessionManager {
         });
 
         let fullOutput = '';
+        let stderrOutput = '';
         const outputStream = proc.stdout;
 
         // Capture output for the completion result
@@ -57,8 +59,19 @@ export class SessionManager {
             }
         })();
 
+        // Capture stderr
+        const stderrReader = proc.stderr.getReader();
+        const stderrDecoder = new TextDecoder();
+        (async () => {
+            while (true) {
+                const { done, value } = await stderrReader.read();
+                if (done) break;
+                stderrOutput += stderrDecoder.decode(value, { stream: true });
+            }
+        })();
+
         proc.exited.then(exitCode => {
-            resolveCompletion({ output: fullOutput, exitCode });
+            resolveCompletion({ output: fullOutput, stderr: stderrOutput, exitCode });
         });
 
         return { stream: streamForConsumer, completion };
