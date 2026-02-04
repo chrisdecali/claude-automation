@@ -143,8 +143,12 @@ function startServer() {
 
                     }
                 } catch (error) {
-                    mainLogger.error(`WebSocket message error: ${error}`);
-                    ws.send(JSON.stringify({ type: 'error', payload: 'Invalid message format or internal error.' }));
+                    const errorMessage = error instanceof Error ? error.message : String(error);
+                    const errorStack = error instanceof Error ? error.stack : '';
+                    mainLogger.error(`WebSocket message error: ${errorMessage}`);
+                    mainLogger.error(`Stack trace: ${errorStack}`);
+                    console.error('WebSocket error:', error);
+                    ws.send(JSON.stringify({ type: 'error', payload: `Error: ${errorMessage}` }));
                 }
             },
             open(ws) {
