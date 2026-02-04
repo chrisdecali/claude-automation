@@ -10,6 +10,7 @@ ExecStart=/usr/local/bin/bun run /opt/claude-automation/src/server.ts
 Restart=always
 Environment="BUN_ENV=production"
 Environment="NODE_ENV=production"
+Environment="HOME=/home/claude"
 
 [Install]
 WantedBy=multi-user.target
