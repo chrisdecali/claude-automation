@@ -6,7 +6,7 @@ After=network.target
 User=claude
 Group=claude
 WorkingDirectory=/opt/claude-automation
-ExecStart=/usr/bin/bun run /opt/claude-automation/src/server.ts
+ExecStart=/usr/local/bin/bun run /opt/claude-automation/src/server.ts
 Restart=always
 Environment="BUN_ENV=production"
 Environment="NODE_ENV=production"

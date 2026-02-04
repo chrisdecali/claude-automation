@@ -43,12 +43,28 @@ chmod -R 750 $APP_DIR
 chmod -R 750 $CONFIG_DIR
 chmod -R 750 $LOG_DIR
 
-# 5. Install dependencies
+# 5. Ensure bun is available system-wide
+if ! command -v bun &> /dev/null; then
+    echo "Installing bun system-wide..."
+    if [ -f "/root/.bun/bin/bun" ]; then
+        cp /root/.bun/bin/bun /usr/local/bin/bun
+        chmod +x /usr/local/bin/bun
+        echo "Bun installed to /usr/local/bin/bun"
+    else
+        echo "ERROR: Bun not found at /root/.bun/bin/bun"
+        echo "Please install bun first: curl -fsSL https://bun.sh/install | bash"
+        exit 1
+    fi
+else
+    echo "Bun already available at $(which bun)"
+fi
+
+# 6. Install dependencies
 echo "Installing dependencies..."
 cd $APP_DIR
 sudo -u $USER bun install --production
 
-# 6. Setup configuration
+# 7. Setup configuration
 if [ ! -f "$CONFIG_DIR/config.json" ]; then
     echo "Copying example config.json..."
     cp $APP_DIR/config/config.json $CONFIG_DIR/config.json.example
@@ -66,7 +82,7 @@ if [ ! -f "$CONFIG_DIR/apis.json" ]; then
 fi
 echo "NOTE: Example configs copied to $CONFIG_DIR. Please rename and configure them."
 
-# 7. Install and enable systemd service
+# 8. Install and enable systemd service
 echo "Installing systemd service..."
 cp $APP_DIR/deploy/claude-automation.service /etc/systemd/system/claude-automation.service
 systemctl daemon-reload
