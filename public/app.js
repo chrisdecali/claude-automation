@@ -11,9 +11,11 @@ document.addEventListener('DOMContentLoaded', () => {
     const socket = new WebSocket(wsUrl);
 
     let assistantMessageElement = null;
-    let thinkingElement = null;
+    let assistantRawText = '';
     let sessionActive = false;
-    let waitingForResponse = false;
+    let workingIndicator = null;
+    let timerInterval = null;
+    let timerStart = null;
 
     function setSessionActive(active) {
         sessionActive = active;
@@ -37,6 +39,42 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
+    function showWorkingIndicator(text) {
+        if (workingIndicator) {
+            const statusEl = workingIndicator.querySelector('.status-text');
+            if (statusEl) statusEl.textContent = text;
+            return;
+        }
+
+        timerStart = Date.now();
+        workingIndicator = document.createElement('div');
+        workingIndicator.className = 'working-indicator mb-3 p-3 rounded-lg bg-gray-700/50 border border-gray-600';
+        workingIndicator.innerHTML = `
+            <div class="flex items-center gap-2">
+                <div class="working-dots flex gap-0.5">
+                    <span class="dot w-1.5 h-1.5 rounded-full bg-blue-400"></span>
+                    <span class="dot w-1.5 h-1.5 rounded-full bg-blue-400"></span>
+                    <span class="dot w-1.5 h-1.5 rounded-full bg-blue-400"></span>
+                </div>
+                <span class="status-text text-sm text-blue-300">${text}</span>
+                <span class="timer text-xs text-gray-500 ml-auto">0s</span>
+            </div>
+        `;
+        chatWindow.appendChild(workingIndicator);
+        chatWindow.scrollTop = chatWindow.scrollHeight;
+
+        timerInterval = setInterval(() => {
+            const elapsed = Math.floor((Date.now() - timerStart) / 1000);
+            const timerEl = workingIndicator?.querySelector('.timer');
+            if (timerEl) timerEl.textContent = `${elapsed}s`;
+        }, 1000);
+    }
+
+    function hideWorkingIndicator() {
+        if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
+        if (workingIndicator) { workingIndicator.remove(); workingIndicator = null; }
+    }
+
     function addMessageToChat(message, sender) {
         const messageElement = document.createElement('div');
         messageElement.classList.add('mb-2', 'whitespace-pre-wrap');
@@ -57,19 +95,35 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function createAssistantMessage() {
-        const messageElement = document.createElement('div');
-        messageElement.classList.add('mb-2', 'whitespace-pre-wrap');
+        const wrapper = document.createElement('div');
+        wrapper.classList.add('mb-3', 'assistant-message');
 
-        const senderElement = document.createElement('strong');
-        senderElement.textContent = 'Claude: ';
-        messageElement.appendChild(senderElement);
+        const senderElement = document.createElement('div');
+        senderElement.classList.add('font-semibold', 'text-blue-300', 'mb-1');
+        senderElement.textContent = 'Claude';
+        wrapper.appendChild(senderElement);
 
-        const contentElement = document.createElement('span');
-        messageElement.appendChild(contentElement);
+        const contentElement = document.createElement('div');
+        contentElement.classList.add('whitespace-pre-wrap', 'leading-relaxed');
+        wrapper.appendChild(contentElement);
 
-        chatWindow.appendChild(messageElement);
+        chatWindow.appendChild(wrapper);
         chatWindow.scrollTop = chatWindow.scrollHeight;
         return contentElement;
+    }
+
+    function renderMarkdown(element, text) {
+        if (typeof marked !== 'undefined') {
+            try {
+                element.classList.remove('whitespace-pre-wrap');
+                element.classList.add('prose', 'prose-invert', 'prose-sm', 'max-w-none');
+                element.innerHTML = marked.parse(text);
+                return;
+            } catch (e) {
+                // fall through to plain text
+            }
+        }
+        element.textContent = text;
     }
 
     socket.onopen = () => {
@@ -89,43 +143,48 @@ document.addEventListener('DOMContentLoaded', () => {
                 break;
             case 'session-closed':
                 setSessionActive(false);
+                hideWorkingIndicator();
                 addMessageToChat(data.payload, 'System');
                 assistantMessageElement = null;
+                assistantRawText = '';
+                break;
+            case 'progress':
+                showWorkingIndicator(data.payload);
                 break;
             case 'stream-start':
-                // Remove thinking indicator
-                if (thinkingElement) {
-                    thinkingElement.remove();
-                    thinkingElement = null;
-                }
+                // Update indicator but keep it visible until first content arrives
+                showWorkingIndicator('Claude is responding...');
                 assistantMessageElement = createAssistantMessage();
-                waitingForResponse = false;
+                assistantRawText = '';
                 break;
             case 'stream':
                 if (assistantMessageElement) {
-                    // Remove thinking indicator on first chunk if still present
-                    if (thinkingElement) {
-                        thinkingElement.remove();
-                        thinkingElement = null;
+                    // Hide working indicator on first actual content
+                    if (assistantRawText === '') {
+                        hideWorkingIndicator();
                     }
-                    assistantMessageElement.textContent += data.payload;
+                    assistantRawText += data.payload;
+                    assistantMessageElement.textContent = assistantRawText;
                     chatWindow.scrollTop = chatWindow.scrollHeight;
                 }
                 break;
             case 'stream-end':
+                // Render final output as markdown
+                if (assistantMessageElement && assistantRawText) {
+                    renderMarkdown(assistantMessageElement, assistantRawText);
+                }
+                hideWorkingIndicator();
                 assistantMessageElement = null;
+                assistantRawText = '';
                 sendButton.disabled = false;
                 promptInput.disabled = false;
                 promptInput.focus();
                 break;
             case 'error':
-                if (thinkingElement) {
-                    thinkingElement.remove();
-                    thinkingElement = null;
-                }
+                hideWorkingIndicator();
                 addMessageToChat(`Error: ${data.payload}`, 'System');
                 assistantMessageElement = null;
-                waitingForResponse = false;
+                assistantRawText = '';
                 sendButton.disabled = false;
                 promptInput.disabled = false;
                 break;
@@ -134,6 +193,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     socket.onclose = () => {
         console.log('WebSocket connection closed.');
+        hideWorkingIndicator();
         addMessageToChat('Connection to server closed.', 'System');
         setSessionActive(false);
     };
@@ -168,16 +228,10 @@ document.addEventListener('DOMContentLoaded', () => {
         socket.send(JSON.stringify({ type: 'chat', payload: prompt }));
         promptInput.value = '';
 
-        // Show thinking indicator and disable input
-        waitingForResponse = true;
+        // Show working indicator and disable input
         sendButton.disabled = true;
         promptInput.disabled = true;
-        thinkingElement = document.createElement('div');
-        thinkingElement.classList.add('mb-2', 'text-gray-400', 'italic');
-        thinkingElement.textContent = 'Claude is thinking...';
-        thinkingElement.style.animation = 'pulse 1.5s ease-in-out infinite';
-        chatWindow.appendChild(thinkingElement);
-        chatWindow.scrollTop = chatWindow.scrollHeight;
+        showWorkingIndicator('Claude is thinking...');
     }
 
     sessionToggle.addEventListener('click', () => {

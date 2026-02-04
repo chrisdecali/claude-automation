@@ -63,62 +63,26 @@ export class SessionManager {
         return { stream: streamForConsumer, completion };
     }
 
-    async runPrompt(prompt: string, conversationHistory: ConversationMessage[], workingDir: string, maxRetries: number = 3): Promise<{ stream: ReadableStream<Uint8Array>; completion: Promise<PromptResult> }> {
-        await mkdir(workingDir, { recursive: true });
-
-        let formattedPrompt: string;
+    formatPrompt(prompt: string, conversationHistory: ConversationMessage[]): string {
         if (conversationHistory.length > 0) {
             const historyText = conversationHistory
                 .map(m => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`)
                 .join('\n\n');
-            formattedPrompt = `Continue this conversation naturally. Here is the history:\n\n${historyText}\n\nUser: ${prompt}\n\nRespond only to the latest message. Do not repeat the conversation.`;
-        } else {
-            formattedPrompt = prompt;
+            return `Continue this conversation naturally. Here is the history:\n\n${historyText}\n\nUser: ${prompt}\n\nRespond only to the latest message. Do not repeat the conversation.`;
         }
+        return prompt;
+    }
 
-        // Try with retries for transient API errors (500, 529)
-        for (let attempt = 1; attempt <= maxRetries; attempt++) {
-            const { stream, completion } = this.spawnClaude(formattedPrompt, workingDir);
-
-            // For the last attempt, return as-is (let caller handle errors)
-            if (attempt === maxRetries) {
-                return { stream, completion };
-            }
-
-            // For earlier attempts, wait for result and check if retryable
-            // We need to consume the stream to check the result
-            const reader = stream.getReader();
-            let output = '';
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-                output += new TextDecoder().decode(value, { stream: true });
-            }
-
-            const result = await completion;
-            const isRetryable = result.exitCode !== 0 &&
-                (result.stderr.includes('500') || result.stderr.includes('529') ||
-                 result.stderr.includes('Internal server error') || result.stderr.includes('overloaded'));
-
-            if (!isRetryable) {
-                // Not a retryable error (or success) — return a synthetic stream with the captured output
-                const encoded = new TextEncoder().encode(result.output || output);
-                const syntheticStream = new ReadableStream<Uint8Array>({
-                    start(controller) {
-                        controller.enqueue(encoded);
-                        controller.close();
-                    }
-                });
-                return { stream: syntheticStream, completion: Promise.resolve(result) };
-            }
-
-            // Wait before retrying (exponential backoff: 2s, 4s)
-            const delay = Math.pow(2, attempt) * 1000;
-            await new Promise(resolve => setTimeout(resolve, delay));
-        }
-
-        // Should never reach here, but TypeScript needs it
+    async runPrompt(prompt: string, conversationHistory: ConversationMessage[], workingDir: string): Promise<{ stream: ReadableStream<Uint8Array>; completion: Promise<PromptResult> }> {
+        await mkdir(workingDir, { recursive: true });
+        const formattedPrompt = this.formatPrompt(prompt, conversationHistory);
         return this.spawnClaude(formattedPrompt, workingDir);
+    }
+
+    isRetryableError(result: PromptResult): boolean {
+        return result.exitCode !== 0 &&
+            (result.stderr.includes('500') || result.stderr.includes('529') ||
+             result.stderr.includes('Internal server error') || result.stderr.includes('overloaded'));
     }
 
     async startSession(options: SessionOptions): Promise<ClaudeSession> {

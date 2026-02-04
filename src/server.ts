@@ -65,6 +65,18 @@ async function writeSessionContext(workingDir: string): Promise<void> {
     lines.push('');
     lines.push('You are Claude, running inside the claude-automation server on a DigitalOcean droplet.');
     lines.push('');
+    lines.push('## Response Format');
+    lines.push('');
+    lines.push('IMPORTANT: Always start your response with a brief plan of what you are going to do, formatted like:');
+    lines.push('');
+    lines.push('**Plan:**');
+    lines.push('1. Step one');
+    lines.push('2. Step two');
+    lines.push('3. Step three');
+    lines.push('');
+    lines.push('Then proceed to execute the plan. For simple questions or greetings, skip the plan and just respond naturally.');
+    lines.push('This helps the user see that you are working and understand what is happening.');
+    lines.push('');
     lines.push('## Important');
     lines.push('- All API credentials are listed below with full tokens — use them directly in curl/fetch calls.');
     lines.push('- When the user asks you to add or update an API, edit `./apis.json` in this directory. Changes persist across sessions.');
@@ -341,39 +353,54 @@ function startServer() {
                             ws.send(JSON.stringify({ type: 'session-started', payload: 'Session auto-started.' }));
                         }
 
-                        ws.send(JSON.stringify({ type: 'stream-start' }));
+                        const maxRetries = 3;
 
-                        const { stream, completion } = await sessionManager.runPrompt(
-                            prompt,
-                            chatState.messages,
-                            chatState.workingDir
-                        );
+                        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+                            if (attempt > 1) {
+                                const backoff = Math.pow(2, attempt) * 1000;
+                                ws.send(JSON.stringify({ type: 'progress', payload: `Retrying... (attempt ${attempt}/${maxRetries})` }));
+                                await new Promise(resolve => setTimeout(resolve, backoff));
+                            }
 
-                        // Stream output to client
-                        const reader = stream.getReader();
-                        const decoder = new TextDecoder();
-                        while (true) {
-                            const { done, value } = await reader.read();
-                            if (done) break;
-                            const chunk = decoder.decode(value, { stream: true });
-                            ws.send(JSON.stringify({ type: 'stream', payload: chunk }));
-                        }
+                            ws.send(JSON.stringify({ type: 'stream-start' }));
 
-                        // Wait for completion, store in history
-                        const result = await completion;
+                            const { stream, completion } = await sessionManager.runPrompt(
+                                prompt,
+                                chatState.messages,
+                                chatState.workingDir
+                            );
 
-                        if (result.exitCode !== 0) {
+                            // Stream output to client in real-time
+                            const reader = stream.getReader();
+                            const decoder = new TextDecoder();
+                            while (true) {
+                                const { done, value } = await reader.read();
+                                if (done) break;
+                                const chunk = decoder.decode(value, { stream: true });
+                                ws.send(JSON.stringify({ type: 'stream', payload: chunk }));
+                            }
+
+                            const result = await completion;
+
+                            if (result.exitCode === 0) {
+                                chatState.messages.push({ role: 'user', content: prompt });
+                                chatState.messages.push({ role: 'assistant', content: result.output });
+                                await syncSessionConfig(chatState.workingDir);
+                                ws.send(JSON.stringify({ type: 'stream-end' }));
+                                break;
+                            }
+
+                            // Check if we should retry
+                            if (sessionManager.isRetryableError(result) && attempt < maxRetries) {
+                                mainLogger.info(`Retryable error on attempt ${attempt}: ${result.stderr.substring(0, 200)}`);
+                                continue;
+                            }
+
+                            // Non-retryable error or last attempt
                             const errMsg = result.stderr || result.output || 'Claude process exited unexpectedly.';
                             mainLogger.error(`claude -p exited with code ${result.exitCode}: ${errMsg}`);
                             ws.send(JSON.stringify({ type: 'error', payload: errMsg.trim() }));
-                        } else {
-                            chatState.messages.push({ role: 'user', content: prompt });
-                            chatState.messages.push({ role: 'assistant', content: result.output });
-
-                            // Sync any config changes back to main config
-                            await syncSessionConfig(chatState.workingDir);
-
-                            ws.send(JSON.stringify({ type: 'stream-end' }));
+                            break;
                         }
                     }
                 } catch (error) {
