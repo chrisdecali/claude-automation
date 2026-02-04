@@ -132,26 +132,32 @@ function startServer() {
                         const stream = session.outputStream;
                         if (stream) {
                             const reader = stream.getReader();
-                            while (true) {
-                                const { done, value } = await reader.read();
-                                if (done) break;
-                                const chunk = new TextDecoder().decode(value);
-                                ws.send(JSON.stringify({ type: 'stream', payload: chunk }));
+                            try {
+                                while (true) {
+                                    const { done, value } = await reader.read();
+                                    if (done) break;
+                                    const chunk = new TextDecoder().decode(value);
+                                    ws.send(JSON.stringify({ type: 'stream', payload: chunk }));
+                                }
+                            } finally {
+                                reader.releaseLock();
                             }
                         }
 
                         // Wait for completion and send final status
                         const finalSession = await session.completion;
-                        ws.send(JSON.stringify({ type: 'status', payload: `Session ${finalSession.id} ${finalSession.status}.` }));
+                        ws.send(JSON.stringify({ type: 'status', payload: `Session completed (${finalSession.status}).` }));
 
                     }
                 } catch (error) {
                     const errorMessage = error instanceof Error ? error.message : String(error);
-                    const errorStack = error instanceof Error ? error.stack : '';
                     mainLogger.error(`WebSocket message error: ${errorMessage}`);
-                    mainLogger.error(`Stack trace: ${errorStack}`);
                     console.error('WebSocket error:', error);
-                    ws.send(JSON.stringify({ type: 'error', payload: `Error: ${errorMessage}` }));
+                    try {
+                        ws.send(JSON.stringify({ type: 'error', payload: `Error: ${errorMessage}` }));
+                    } catch (_) {
+                        // WebSocket may already be closed
+                    }
                 }
             },
             open(ws) {

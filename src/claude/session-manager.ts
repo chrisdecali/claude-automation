@@ -57,20 +57,6 @@ export class SessionManager {
             session.endTime = new Date();
             session.exitCode = exitCode;
             session.status = exitCode === 0 ? 'completed' : 'failed';
-
-            // To ensure the full stdout is captured if not consumed elsewhere
-            const stdoutReader = session.outputStream?.getReader();
-            if (stdoutReader) {
-                const readAll = async () => {
-                    while(true) {
-                        const {done, value} = await stdoutReader.read();
-                        if (done) break;
-                        session.output.push({ stream: 'stdout', data: decoder.decode(value) });
-                    }
-                }
-                readAll();
-            }
-
             resolveCompletion(session);
         });
 
