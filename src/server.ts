@@ -39,11 +39,14 @@ function startServer() {
             const url = new URL(req.url);
 
             if (url.pathname === '/ws') {
+                mainLogger.info('WebSocket upgrade attempt from ' + req.headers.get('x-forwarded-for') || req.url);
                 const upgraded = server.upgrade(req);
                 if (!upgraded) {
+                    mainLogger.error('WebSocket upgrade failed');
                     return new Response("WebSocket upgrade failed", { status: 400 });
                 }
-                return; // response is sent by the websocket
+                mainLogger.info('WebSocket upgrade successful');
+                return undefined; // response is sent by the websocket
             }
 
             let filePath = `./public${url.pathname}`;
