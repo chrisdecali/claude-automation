@@ -3,8 +3,66 @@ import { randomUUID } from "crypto";
 import { ClaudeSession, SessionOptions } from './types';
 import { mkdir } from 'fs/promises';
 
+export interface ConversationMessage {
+    role: 'user' | 'assistant';
+    content: string;
+}
+
+export interface PromptResult {
+    output: string;
+    exitCode: number;
+}
+
 export class SessionManager {
     private activeSessions: Map<string, ClaudeSession> = new Map();
+
+    async runPrompt(prompt: string, conversationHistory: ConversationMessage[], workingDir: string): Promise<{ stream: ReadableStream<Uint8Array>; completion: Promise<PromptResult> }> {
+        await mkdir(workingDir, { recursive: true });
+
+        let formattedPrompt: string;
+        if (conversationHistory.length > 0) {
+            const historyText = conversationHistory
+                .map(m => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`)
+                .join('\n\n');
+            formattedPrompt = `Continue this conversation naturally. Here is the history:\n\n${historyText}\n\nUser: ${prompt}\n\nRespond only to the latest message. Do not repeat the conversation.`;
+        } else {
+            formattedPrompt = prompt;
+        }
+
+        const proc = spawn({
+            cmd: ["claude", "-p", formattedPrompt],
+            cwd: workingDir,
+            stdout: "pipe",
+            stderr: "pipe",
+        });
+
+        let resolveCompletion: (result: PromptResult) => void;
+        const completion = new Promise<PromptResult>((resolve) => {
+            resolveCompletion = resolve;
+        });
+
+        let fullOutput = '';
+        const outputStream = proc.stdout;
+
+        // Capture output for the completion result
+        const [streamForConsumer, streamForCapture] = outputStream.tee();
+
+        const captureReader = streamForCapture.getReader();
+        const decoder = new TextDecoder();
+        (async () => {
+            while (true) {
+                const { done, value } = await captureReader.read();
+                if (done) break;
+                fullOutput += decoder.decode(value, { stream: true });
+            }
+        })();
+
+        proc.exited.then(exitCode => {
+            resolveCompletion({ output: fullOutput, exitCode });
+        });
+
+        return { stream: streamForConsumer, completion };
+    }
 
     async startSession(options: SessionOptions): Promise<ClaudeSession> {
         let resolveCompletion: (session: ClaudeSession) => void;
@@ -13,7 +71,7 @@ export class SessionManager {
         });
 
         const proc = spawn({
-            cmd: ["claude", options.prompt],
+            cmd: ["claude", "-p", options.prompt],
             cwd: options.workingDir,
             stdout: "pipe",
             stderr: "pipe",

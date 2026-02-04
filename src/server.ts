@@ -1,11 +1,28 @@
 import { AppConfig, loadConfig, reloadConfig } from './config/config';
 import { Logger } from './logging/logger';
 import { TaskLogger } from './logging/task-logger';
-import { SessionManager } from './claude/session-manager';
+import { SessionManager, ConversationMessage } from './claude/session-manager';
 import { PushbulletService } from './notifications/pushbullet';
 import { CronScheduler } from './scheduler/cron-scheduler';
 import { ConfigWatcher } from './config/watcher';
-import { Server } from 'bun';
+import { Server, ServerWebSocket } from 'bun';
+
+interface ChatSessionState {
+    active: boolean;
+    messages: ConversationMessage[];
+    workingDir: string;
+}
+
+const chatSessions = new WeakMap<ServerWebSocket<unknown>, ChatSessionState>();
+
+function getOrCreateSession(ws: ServerWebSocket<unknown>): ChatSessionState {
+    let session = chatSessions.get(ws);
+    if (!session) {
+        session = { active: false, messages: [], workingDir: `/tmp/claude-chat/${Date.now()}` };
+        chatSessions.set(ws, session);
+    }
+    return session;
+}
 
 let config = await loadConfig();
 const mainLogger = new Logger(config.logDir);
@@ -115,32 +132,59 @@ function startServer() {
             async message(ws, message) {
                 try {
                     const data = JSON.parse(message.toString());
+                    const chatState = getOrCreateSession(ws);
+
+                    if (data.type === 'start') {
+                        chatState.active = true;
+                        chatState.messages = [];
+                        chatState.workingDir = `/tmp/claude-chat/${Date.now()}`;
+                        ws.send(JSON.stringify({ type: 'session-started', payload: 'Session started. You can now chat with Claude.' }));
+                        return;
+                    }
+
+                    if (data.type === 'close-session') {
+                        const msgCount = chatState.messages.length;
+                        chatState.active = false;
+                        chatState.messages = [];
+                        ws.send(JSON.stringify({ type: 'session-closed', payload: `Session closed. ${msgCount} messages cleared.` }));
+                        return;
+                    }
+
                     if (data.type === 'chat') {
                         const prompt = data.payload;
-                        const session = await sessionManager.startSession({
-                            taskName: 'live-chat',
-                            prompt: prompt,
-                            workingDir: `/tmp/claude-sessions/${Date.now()}`
-                        });
 
-                        ws.send(JSON.stringify({ type: 'status', payload: `Session ${session.id} started.` }));
-
-                        // Stream output
-                        const stream = session.outputStream;
-                        if (stream) {
-                            const reader = stream.getReader();
-                            while (true) {
-                                const { done, value } = await reader.read();
-                                if (done) break;
-                                const chunk = new TextDecoder().decode(value);
-                                ws.send(JSON.stringify({ type: 'stream', payload: chunk }));
-                            }
+                        // Auto-start session if not active
+                        if (!chatState.active) {
+                            chatState.active = true;
+                            chatState.messages = [];
+                            chatState.workingDir = `/tmp/claude-chat/${Date.now()}`;
+                            ws.send(JSON.stringify({ type: 'session-started', payload: 'Session auto-started.' }));
                         }
 
-                        // Wait for completion and send final status
-                        const finalSession = await session.completion;
-                        ws.send(JSON.stringify({ type: 'status', payload: `Session ${finalSession.id} ${finalSession.status}.` }));
+                        ws.send(JSON.stringify({ type: 'stream-start' }));
 
+                        const { stream, completion } = await sessionManager.runPrompt(
+                            prompt,
+                            chatState.messages,
+                            chatState.workingDir
+                        );
+
+                        // Stream output to client
+                        const reader = stream.getReader();
+                        const decoder = new TextDecoder();
+                        while (true) {
+                            const { done, value } = await reader.read();
+                            if (done) break;
+                            const chunk = decoder.decode(value, { stream: true });
+                            ws.send(JSON.stringify({ type: 'stream', payload: chunk }));
+                        }
+
+                        // Wait for completion, store in history
+                        const result = await completion;
+                        chatState.messages.push({ role: 'user', content: prompt });
+                        chatState.messages.push({ role: 'assistant', content: result.output });
+
+                        ws.send(JSON.stringify({ type: 'stream-end' }));
                     }
                 } catch (error) {
                     mainLogger.error(`WebSocket message error: ${error}`);
