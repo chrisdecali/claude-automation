@@ -37,6 +37,15 @@ function startServer() {
         
         async fetch(req, server) {
             const url = new URL(req.url);
+
+            if (url.pathname === '/ws') {
+                const upgraded = server.upgrade(req);
+                if (!upgraded) {
+                    return new Response("WebSocket upgrade failed", { status: 400 });
+                }
+                return; // response is sent by the websocket
+            }
+
             let filePath = `./public${url.pathname}`;
             if (url.pathname === '/') {
                 filePath = './public/index.html';
@@ -101,6 +110,50 @@ function startServer() {
             }
 
             return new Response('Not Found', { status: 404 });
+        },
+        websocket: {
+            async message(ws, message) {
+                try {
+                    const data = JSON.parse(message.toString());
+                    if (data.type === 'chat') {
+                        const prompt = data.payload;
+                        const session = await sessionManager.startSession({
+                            taskName: 'live-chat',
+                            prompt: prompt,
+                            workingDir: `/tmp/claude-sessions/${Date.now()}`
+                        });
+
+                        ws.send(JSON.stringify({ type: 'status', payload: `Session ${session.id} started.` }));
+
+                        // Stream output
+                        const stream = session.outputStream;
+                        if (stream) {
+                            const reader = stream.getReader();
+                            while (true) {
+                                const { done, value } = await reader.read();
+                                if (done) break;
+                                const chunk = new TextDecoder().decode(value);
+                                ws.send(JSON.stringify({ type: 'stream', payload: chunk }));
+                            }
+                        }
+
+                        // Wait for completion and send final status
+                        const finalSession = await session.completion;
+                        ws.send(JSON.stringify({ type: 'status', payload: `Session ${finalSession.id} ${finalSession.status}.` }));
+
+                    }
+                } catch (error) {
+                    mainLogger.error(`WebSocket message error: ${error}`);
+                    ws.send(JSON.stringify({ type: 'error', payload: 'Invalid message format or internal error.' }));
+                }
+            },
+            open(ws) {
+                mainLogger.info('WebSocket connection opened.');
+                ws.send(JSON.stringify({ type: 'status', payload: 'Connection established.' }));
+            },
+            close(ws, code, reason) {
+                mainLogger.info(`WebSocket connection closed: ${code} ${reason}`);
+            }
         },
         error(error) {
             mainLogger.error(`Server error: ${error}`);

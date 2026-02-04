@@ -1,15 +1,22 @@
 import { spawn, Subprocess } from "bun";
 import { randomUUID } from "crypto";
-import { ClaudeSession, SessionOptions, SessionCompletionStatus } from './types';
+import { ClaudeSession, SessionOptions } from './types';
 import { mkdir } from 'fs/promises';
 
 export class SessionManager {
     private activeSessions: Map<string, ClaudeSession> = new Map();
 
     async startSession(options: SessionOptions): Promise<ClaudeSession> {
-        let resolveCompletion: (status: SessionCompletionStatus) => void;
-        const completionPromise = new Promise<SessionCompletionStatus>((resolve) => {
+        let resolveCompletion: (session: ClaudeSession) => void;
+        const completionPromise = new Promise<ClaudeSession>((resolve) => {
             resolveCompletion = resolve;
+        });
+
+        const proc = spawn({
+            cmd: ["claude", options.prompt],
+            cwd: options.workingDir,
+            stdout: "pipe",
+            stderr: "pipe",
         });
 
         const session: ClaudeSession = {
@@ -20,6 +27,7 @@ export class SessionManager {
             startTime: new Date(),
             status: 'running',
             output: [],
+            outputStream: proc.stdout,
             completion: completionPromise,
         };
 
@@ -27,43 +35,38 @@ export class SessionManager {
 
         await mkdir(options.workingDir, { recursive: true });
 
-        const proc = spawn({
-            cmd: ["claude", options.prompt],
-            cwd: options.workingDir,
-            stdout: "pipe",
-            stderr: "pipe",
-        });
-
         let stderrOutput = '';
-        const handleOutput = async (stream: ReadableStream<Uint8Array>, type: 'stdout' | 'stderr') => {
-            const reader = stream.getReader();
-            const decoder = new TextDecoder();
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-                const data = decoder.decode(value);
-                if (type === 'stderr') {
-                    stderrOutput += data;
-                }
-                session.output.push({ stream: type, data });
+        const reader = proc.stderr.getReader();
+        const decoder = new TextDecoder();
+        reader.read().then(async function processText({ done, value }): Promise<void> {
+            if (done) {
+                return;
             }
-        };
-
-        handleOutput(proc.stdout, 'stdout');
-        handleOutput(proc.stderr, 'stderr');
+            const chunk = decoder.decode(value, { stream: true });
+            stderrOutput += chunk;
+            session.output.push({ stream: 'stderr', data: chunk });
+            return reader.read().then(processText);
+        });
 
         proc.exited.then(exitCode => {
             session.endTime = new Date();
             session.exitCode = exitCode;
             session.status = exitCode === 0 ? 'completed' : 'failed';
             
-            const completionStatus: SessionCompletionStatus = {
-                status: session.status,
-                exitCode: exitCode,
-                error: exitCode !== 0 ? stderrOutput : undefined,
-            };
-            
-            resolveCompletion(completionStatus);
+            // To ensure the full stdout is captured if not consumed elsewhere
+            const stdoutReader = session.outputStream?.getReader();
+            if (stdoutReader) {
+                const readAll = async () => {
+                    while(true) {
+                        const {done, value} = await stdoutReader.read();
+                        if (done) break;
+                        session.output.push({ stream: 'stdout', data: decoder.decode(value) });
+                    }
+                }
+                readAll();
+            }
+
+            resolveCompletion(session);
         });
 
         return session;
