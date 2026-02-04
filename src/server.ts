@@ -3,6 +3,7 @@ import { Logger } from './logging/logger';
 import { TaskLogger } from './logging/task-logger';
 import { SessionManager } from './claude/session-manager';
 import { PushbulletService } from './notifications/pushbullet';
+import { CronScheduler } from './scheduler/cron-scheduler';
 import { Server } from 'bun';
 
 let config = await loadConfig();
@@ -10,7 +11,9 @@ const mainLogger = new Logger(config.logDir);
 const sessionManager = new SessionManager();
 let pushbulletService = new PushbulletService(config.pushbullet.token);
 
+
 let server: Server;
+let cronScheduler: CronScheduler;
 
 // Auth middleware function
 function requireAuth(req: Request): Response | null {
@@ -152,7 +155,32 @@ function startServer() {
     });
 
     mainLogger.info(`Server listening on ${server.hostname}:${server.port}`);
+    
+    // Initialize and start cron scheduler
+    cronScheduler = new CronScheduler(mainLogger, runTask);
+    cronScheduler.scheduleTasks(config);
 }
 
+async function hotReload() {
+    mainLogger.info('Hot reloading configuration...');
+    
+    // Stop existing services
+    cronScheduler.stopAll();
+    server.stop(true); // true for graceful shutdown
+
+    // Reload config
+    const newConfig = await reloadConfig();
+    config = newConfig;
+
+    // Re-initialize services with new config
+    pushbulletService = new PushbulletService(config.pushbullet.token);
+    
+    // Restart server and scheduler
+    startServer();
+    mainLogger.info('Hot reload complete.');
+}
+
+
 startServer();
+
 
