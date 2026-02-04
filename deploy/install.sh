@@ -1,6 +1,9 @@
 #!/bin/bash
 set -e
 
+# Store the source directory (where script is run from)
+SOURCE_DIR="$(pwd)"
+
 APP_DIR="/opt/claude-automation"
 CONFIG_DIR="/etc/claude-automation"
 LOG_DIR="/var/log/claude-tasks"
@@ -84,14 +87,11 @@ echo "NOTE: Example configs copied to $CONFIG_DIR. Please rename and configure t
 
 # 8. Install and enable systemd service
 echo "Installing systemd service..."
-# The service file should be copied from the source repo before running this script
-# We expect it to be passed as an argument or available in the current directory structure
-if [ -f "deploy/claude-automation.service" ]; then
-    cp deploy/claude-automation.service /etc/systemd/system/claude-automation.service
-elif [ -f "../deploy/claude-automation.service" ]; then
-    cp ../deploy/claude-automation.service /etc/systemd/system/claude-automation.service
+# Copy from the source directory we captured at the start
+if [ -f "$SOURCE_DIR/deploy/claude-automation.service" ]; then
+    cp "$SOURCE_DIR/deploy/claude-automation.service" /etc/systemd/system/claude-automation.service
 else
-    echo "ERROR: Cannot find claude-automation.service file"
+    echo "ERROR: Cannot find claude-automation.service at $SOURCE_DIR/deploy/"
     echo "Please ensure the script is run from the project root directory"
     exit 1
 fi
