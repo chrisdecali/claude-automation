@@ -13,7 +13,7 @@ export class SessionManager {
         });
 
         const proc = spawn({
-            cmd: ["claude", options.prompt],
+            cmd: ["/usr/bin/claude", options.prompt],
             cwd: options.workingDir,
             stdout: "pipe",
             stderr: "pipe",
